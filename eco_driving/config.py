@@ -16,6 +16,8 @@ class EnvConfig:
     v_max: float = 16.0            # m/s, speed limit
     a_min: float = -4.0            # m/s^2, hard braking
     a_max: float = 2.5             # m/s^2, max acceleration
+    v0_min: float = 4.0            # m/s, episode start speed range (already approaching)
+    v0_max: float = 12.0           # m/s
 
     # --- Vehicle physical parameters ---
     mass: float = 1500.0           # kg

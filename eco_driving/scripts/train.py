@@ -97,7 +97,12 @@ def train_one_seed(seed: int, total_timesteps: int, eval_freq: int, n_eval_episo
     metrics_csv_path = os.path.join(model_dir, "train_metrics.csv")
 
     train_venv = DummyVecEnv([make_env(env_cfg, train_monitor_path)])
-    train_venv = VecNormalize(train_venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
+    # norm_reward=False: an ablation (see README "pitfalls") showed VecNormalize's
+    # return-based reward normalization collapses the learning signal to ~zero on
+    # this task (gamma=0.99 over 320-step episodes inflates the running return-std
+    # enough to flatline gradients) -- the policy never left a "never move" local
+    # optimum with norm_reward=True, but converged normally with it off.
+    train_venv = VecNormalize(train_venv, norm_obs=True, norm_reward=False, clip_obs=10.0)
 
     eval_venv = DummyVecEnv([make_env(env_cfg, eval_monitor_path)])
     eval_venv = VecNormalize(eval_venv, norm_obs=True, norm_reward=False, clip_obs=10.0, training=False)

@@ -41,7 +41,9 @@ class EcoDrivingEnv(gym.Env):
         rng = self.np_random
 
         self.x = 0.0
-        self.v = 0.0
+        # start already approaching the intersection (not from a dead stop): avoids
+        # a one-time cold-start jerk cost and better matches the intended scenario.
+        self.v = float(rng.uniform(c.v0_min, c.v0_max))
         self.a_prev = 0.0
         self.t = 0.0
 

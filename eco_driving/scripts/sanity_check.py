@@ -34,7 +34,10 @@ def run_bounds_stress(n_episodes=50):
 
 
 def run_idle_vs_arrival_check():
-    """A policy that idles forever must score clearly worse than one that arrives."""
+    """A policy that brakes to a stop and stays there must score clearly worse than
+    one that keeps driving toward arrival -- i.e. 'stay stopped' must not be a
+    dominant strategy. (Episodes start already moving at v0 in [v0_min, v0_max],
+    so the degenerate policy has to actively brake to a stop, not just coast.)"""
     cfg = EnvConfig()
 
     def rollout(policy_fn, seed):
@@ -48,8 +51,12 @@ def run_idle_vs_arrival_check():
             total_r += r
         return total_r, info
 
-    def idle_policy(obs, env):
-        return np.array([env.cfg.a_min * 0.0], dtype=np.float32)  # a=0 -> stays at rest
+    def stop_policy(obs, env):
+        # brake hard to a stop, then hold at rest for the remainder of the episode
+        v = obs[0] * env.cfg.v_max
+        if v > 0.05:
+            return np.array([env.cfg.a_min], dtype=np.float32)
+        return np.array([0.0], dtype=np.float32)
 
     def arrive_policy(obs, env):
         # crude bang-bang: accelerate unless very close to speed limit or a leader is close
@@ -61,16 +68,38 @@ def run_idle_vs_arrival_check():
             return np.array([env.cfg.a_max * 0.6], dtype=np.float32)
         return np.array([0.0], dtype=np.float32)
 
-    idle_scores = [rollout(idle_policy, s)[0] for s in range(5)]
+    stop_scores = [rollout(stop_policy, s)[0] for s in range(5)]
     arrive_scores = [rollout(arrive_policy, s)[0] for s in range(5)]
-    print(f"idle policy mean return:    {np.mean(idle_scores):.2f}")
-    print(f"arrive-ish policy return:   {np.mean(arrive_scores):.2f}")
-    assert np.mean(arrive_scores) > np.mean(idle_scores), "Degenerate idle policy is not dominated!"
-    print("idle-vs-arrival dominance check: PASS")
+    print(f"brake-and-stop policy mean return: {np.mean(stop_scores):.2f}")
+    print(f"arrive-ish policy mean return:     {np.mean(arrive_scores):.2f}")
+    assert np.mean(arrive_scores) > np.mean(stop_scores), "Degenerate stop policy is not dominated!"
+    print("stop-vs-arrival dominance check: PASS")
+
+
+def run_nonzero_displacement_check(n_episodes=10, n_steps=20):
+    """A short random-action rollout must produce nonzero net displacement --
+    guards against the env silently regressing to a v0=0 dead-stop start where a
+    'never move' policy could become a stable local optimum for training."""
+    cfg = EnvConfig()
+    rng = np.random.default_rng(7)
+    for ep in range(n_episodes):
+        env = EcoDrivingEnv(cfg)
+        obs, info = env.reset(seed=1000 + ep)
+        x0 = env.x
+        assert x0 == 0.0
+        assert env.v > 0.0, "episode should start already in motion (v0_min > 0)"
+        for _ in range(n_steps):
+            a = env.action_space.sample()
+            obs, r, terminated, truncated, info = env.step(a)
+            if terminated or truncated:
+                break
+        assert env.x > x0, f"no net displacement after {n_steps} random steps (ep {ep})"
+    print(f"nonzero-displacement check ({n_episodes} episodes): PASS")
 
 
 if __name__ == "__main__":
     run_check_env()
     run_bounds_stress()
     run_idle_vs_arrival_check()
+    run_nonzero_displacement_check()
     print("\nAll sanity checks passed.")

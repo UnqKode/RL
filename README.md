@@ -55,7 +55,9 @@ Each training run saves, per seed, under `models/sac_seed<N>/`:
 
 Point-mass vehicle, `dt=0.5s`, `route_length=800m`, one fixed-time signal at `x=400m`
 (`green=20s/yellow=3s/red=20s` + random per-episode offset), speed limit `16 m/s`,
-`a ∈ [-4.0, 2.5] m/s²`. A leading vehicle is present 80% of episodes, spawned
+`a ∈ [-4.0, 2.5] m/s²`. Each episode starts already approaching the intersection at
+a random speed `v0 ~ Uniform(4, 12) m/s` (see pitfall #6) rather than from a dead
+stop. A leading vehicle is present 80% of episodes, spawned
 10–30m ahead; it repeatedly retargets a cruise speed in `[0.5, 0.85]·v_max`
 (occasionally aiming for a near-stop) so it never simply free-flows away — the
 policy must genuinely track it. The leader also brakes for the signal itself.
@@ -99,11 +101,14 @@ dominate the whole reward and destabilize training.
 ### Pitfalls this design specifically avoids (and why they matter)
 
 1. **Degenerate "stop forever."** With only `−fuel` and `−time` on a fixed-time
-   episode, the reward-maximizing policy is to never move (zero fuel, and the
-   episode just times out once). The progress term `w_prog·dx` plus the arrival
-   bonus and timeout penalty make idling clearly worse than arriving —
-   `sanity_check.py::run_idle_vs_arrival_check` asserts this on every run
-   (idle policy scores ≈ **−427**, a crude "try to arrive" policy scores ≈ **−170**).
+   episode, the reward-maximizing policy is to brake to a stop and never move
+   again (near-zero fuel, and the episode just times out once). The progress
+   term `w_prog·dx` plus the arrival bonus and timeout penalty make stopping
+   clearly worse than arriving — `sanity_check.py::run_idle_vs_arrival_check`
+   asserts this on every run (brake-and-stop policy scores ≈ **−309**, a crude
+   "try to arrive" policy scores ≈ **−143**). This reward-level dominance is
+   necessary but, as pitfall #5 below shows, not sufficient on its own — the
+   *optimizer* also has to be able to see the gradient toward the better policy.
 2. **Runaway-leader reward explosion.** Fixed via the clipped/asymmetric gap
    term above *and* by making the leader stop-and-go (never drifting away to
    `v_max`), so gap error stays in a sane range in practice, not just in the
@@ -116,7 +121,37 @@ dominate the whole reward and destabilize training.
 4. **Charging fuel/jerk for clipped acceleration.** Always compute fuel and jerk
    from `a_eff` (post speed-clip), never the raw commanded acceleration (see
    Dynamics above).
-5. **Baseline running red lights by accident** (a bug found and fixed during
+5. **`VecNormalize(norm_reward=True)` silently collapsing the learning signal to
+   zero — the single biggest pitfall found during development.** The first full
+   training run got stuck: every seed idled for the entire episode (timeout every
+   time, fuel pinned at the ~32mL idle floor) with zero improvement through
+   250k steps, exactly the "stop forever" failure mode pitfall #1 is supposed to
+   prevent. A controlled ablation (leader on/off × `norm_reward` True/False, short
+   budgets) isolated the cause: with `norm_reward=True`, both leader configurations
+   were completely frozen (bit-identical eval metrics at every checkpoint); with
+   `norm_reward=False`, both broke through to real driving. `VecNormalize`
+   normalizes reward by a running estimate of the discounted return's std; with
+   `gamma=0.99` over 320-step episodes that running estimate inflates enough to
+   flatten the per-step gradient toward zero on this task, regardless of the
+   specific reward composition. **Fix:** train with `norm_reward=False` (kept
+   `norm_obs=True`, which is what mattered for network conditioning anyway). This
+   is the one deviation from the literal "non-negotiable" tech-stack line in the
+   original spec — justified by the ablation above, since the literal
+   `norm_reward=True` config never learns at all on this task.
+6. **Cold-start jerk cost from `v=0` at reset** (a secondary, compounding issue
+   flagged during review): starting every episode at a dead stop means the very
+   first nonzero action jumps `a_prev` from 0, producing a one-time jerk of
+   `a/dt` and a `w_jerk·jerk²` cost that a stopped policy never has to pay. On its
+   own this is a small one-time cost (easily outweighed by the arrival bonus once
+   any gradient signal exists at all — item 5 above was the dominant effect), but
+   it's still an avoidable, arguably unrealistic penalty and doesn't match the
+   intended scenario ("approaching an intersection"). Fixed by sampling the
+   episode's initial speed `v0 ~ Uniform(v0_min, v0_max) = Uniform(4, 12) m/s`
+   instead of starting at rest. `sanity_check.py` now also asserts (a) a
+   brake-to-a-stop-and-hold policy is dominated by a keep-driving policy, and
+   (b) a short random-action rollout produces nonzero net displacement — both
+   guard against this class of bug recurring silently.
+7. **Baseline running red lights by accident** (a bug found and fixed during
    development, not part of the original design doc): an early version of the
    IDM baseline started braking as soon as the signal turned red/yellow using a
    "comfort deceleration" formula, *even when continuing at current speed would
@@ -138,7 +173,8 @@ dominate the whole reward and destabilize training.
 SAC, `MlpPolicy`, `net_arch=[256,256]`, `lr=3e-4`, `buffer_size=300_000`,
 `batch_size=256`, `gamma=0.99`, `tau=0.005`, `train_freq=1`, `gradient_steps=1`,
 `learning_starts=5_000`, `ent_coef="auto"`. Single training env (`DummyVecEnv`)
-wrapped in `VecNormalize(norm_obs=True, norm_reward=True, clip_obs=10)`. A
+wrapped in `VecNormalize(norm_obs=True, norm_reward=False, clip_obs=10)` — see
+pitfall #5 below for why `norm_reward` is off. A
 separate `VecNormalize(training=False, norm_reward=False)` eval env is scored by
 `EvalCallback` every 10k steps (SB3 auto-syncs its normalization stats from the
 training env); the best checkpoint by deterministic eval reward is kept.
