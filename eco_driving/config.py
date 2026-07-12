@@ -95,5 +95,10 @@ class TrainConfig:
     gradient_steps: int = 1
     learning_starts: int = 5_000
     ent_coef: str = "auto"
+    # Default SAC "auto" target entropy is -action_dim = -1 for this 1-D action
+    # space; on this task that can decay too fast for some seeds, collapsing
+    # exploration before the policy escapes the "never move" local optimum (see
+    # README pitfalls). -0.3 (less negative) keeps a higher entropy floor longer.
+    target_entropy: float = -0.3
     net_arch: tuple = (256, 256)
     seeds: tuple = (0, 1, 2)

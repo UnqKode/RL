@@ -119,6 +119,7 @@ def train_one_seed(seed: int, total_timesteps: int, eval_freq: int, n_eval_episo
         gradient_steps=train_cfg.gradient_steps,
         learning_starts=train_cfg.learning_starts,
         ent_coef=train_cfg.ent_coef,
+        target_entropy=train_cfg.target_entropy,
         policy_kwargs=dict(net_arch=list(train_cfg.net_arch)),
         seed=seed,
         verbose=verbose,

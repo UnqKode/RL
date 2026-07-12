@@ -172,13 +172,24 @@ dominate the whole reward and destabilize training.
 
 SAC, `MlpPolicy`, `net_arch=[256,256]`, `lr=3e-4`, `buffer_size=300_000`,
 `batch_size=256`, `gamma=0.99`, `tau=0.005`, `train_freq=1`, `gradient_steps=1`,
-`learning_starts=5_000`, `ent_coef="auto"`. Single training env (`DummyVecEnv`)
-wrapped in `VecNormalize(norm_obs=True, norm_reward=False, clip_obs=10)` — see
-pitfall #5 below for why `norm_reward` is off. A
-separate `VecNormalize(training=False, norm_reward=False)` eval env is scored by
+`learning_starts=5_000`, `ent_coef="auto"`, `target_entropy=-0.3` (less negative
+than SB3's default `-action_dim=-1`; see pitfall #8). Single training env
+(`DummyVecEnv`) wrapped in `VecNormalize(norm_obs=True, norm_reward=False,
+clip_obs=10)` — see pitfall #5 for why `norm_reward` is off. A separate
+`VecNormalize(training=False, norm_reward=False)` eval env is scored by
 `EvalCallback` every 10k steps (SB3 auto-syncs its normalization stats from the
 training env); the best checkpoint by deterministic eval reward is kept.
-3 seeds (0, 1, 2) are trained independently, 400k timesteps each.
+
+**Only 2 of the intended 3 seeds are reported (seeds 0 and 1).** Seed 2 was
+attempted three times — full 400k runs under both the default entropy target and
+`target_entropy=-0.3`, plus a shortened diagnostic — and never escaped the
+idle/timeout failure mode in any of them (still `travel_time≈160s` and fuel at
+the idle floor even past 200k steps every time). This is a genuine, reproducible
+finding about this task's sensitivity to SAC's initialization/seed, not a script
+bug: seeds 0 and 1 broke through cleanly (some noisily, but cleanly) on their
+first attempt each. See pitfall #8 for the likely connection to the "stall on
+stop" issue below. `models/sac_seed2/` is kept as-is (three interrupted attempts'
+worth of logs) as evidence for this finding rather than deleted.
 
 ## Evaluation
 
@@ -192,16 +203,73 @@ the running stats or use the reward at eval time).
 
 Reported per driver: travel time, total fuel (mL), stop-steps (`v < 0.3 m/s`),
 max `|jerk|`, plus arrival/timeout/red-run/collision counts — averaged over the
-10 scenarios, and for the policy, additionally averaged (mean ± std) across the
-3 seeds. Plots (`results/plots/`): speed-vs-position, speed-vs-time (signal phase
+10 scenarios, and for the policy, additionally averaged (mean ± std) across
+seeds. Plots (`results/plots/`): speed-vs-position, speed-vs-time (signal phase
 shaded), cumulative fuel, gap-vs-time (actual vs. desired headway) for a
-leader-present scenario, and the 3-seed learning curve.
+leader-present scenario, and the learning curves.
 
-## Definition of done — how to check it
+### Actual results (seeds 0, 1; 10 fixed scenarios)
 
-- `python -m eco_driving.scripts.sanity_check` passes (`check_env`, bounds, idle-dominance).
-- `python -m eco_driving.scripts.evaluate` reports, for the SAC policy: arrived in
-  all 10 scenarios (no timeouts/red-runs/collisions), lower total fuel and lower
-  max `|jerk|` than the baseline at comparable travel time, and — in leader
-  scenarios — mean gap tracking the desired time-headway rather than free-flowing
-  away to the 150m sentinel.
+| | travel_time (s) | fuel (mL) | stop-steps | max\|jerk\| | arrived |
+|---|---|---|---|---|---|
+| baseline (IDM) | 93.25 ± 17.93 | 79.31 ± 7.18 | 0.60 ± 1.80 | 3.38 ± 0.36 | 10/10 |
+| SAC seed 0 | 96.40 ± 21.53 | 82.64 ± 10.86 | 45.70 ± 30.91 | 2.96 ± 0.81 | 10/10 |
+| SAC seed 1 | 104.25 ± 27.82 | 85.09 ± 11.13 | 63.00 ± 56.55 | 4.06 ± 1.27 | 9/10 (1 timeout) |
+| SAC across seeds | 100.33 ± 3.92 | 83.87 ± 1.22 | 54.35 ± 8.65 | 3.51 ± 0.55 | 19/20 |
+
+## Definition of done — actual status (honest assessment)
+
+This project does **not** fully meet the definition of done as originally
+specified, for reasons documented below rather than papered over:
+
+- ✅ `check_env` passes; training runs end-to-end with saved artifacts and
+  reproducible seeds; all 5 required plots are generated.
+- ✅ Baseline is safe: 10/10 arrivals, 0 red-runs, 0 collisions (verified further
+  on 200+ extra seeds during development).
+- ❌ **"Deterministic eco-policy arrives in every eval scenario"** — seed 0 does
+  (10/10); seed 1 does not (9/10, one timeout). See pitfall #8.
+- ❌ **"Uses less fuel and is smoother (lower max|jerk|) than baseline at
+  comparable travel time"** — travel time is comparable (within ~11s on
+  average), and seed 0's jerk (2.96) *is* lower than baseline's (3.38), but fuel
+  is higher, not lower (83.87 vs 79.31 mL across seeds), and jerk is worse on
+  average once seed 1 (4.06) is included. Root cause: pitfall #8.
+- ✅ **Gap tracking** — see `results/plots/gap_vs_time.png`; when actually
+  following (not stalled), the policy's gap tracks the desired headway rather
+  than free-flowing to the 150m sentinel.
+
+### Pitfall #8: policy sometimes fails to resume from a full stop ("stall-on-stop")
+
+Found by tracing individual evaluation scenarios, not anticipated by the
+original design doc. Both seed 0 and seed 1 exhibit it; seed 1 hit it badly
+enough to time out once.
+
+**Symptom:** the policy brakes to `v=0` for a legitimate reason (e.g. shadowing
+the leader's stop-and-go near-stop event), but then, even once the leader has
+sped off far ahead (gap growing past 100m, 300m, 600m+) and no signal is forcing
+a stop, the policy keeps commanding negative acceleration and stays parked at
+`v=0` for tens of seconds before eventually resuming. In the worst observed case
+(seed 1, scenario 500) it never resumed in time and the episode timed out; seed
+0 hit the same pattern multiple times in the same trace but happened to resume
+soon enough to still arrive (barely — 124s of a 160s budget). This inflates the
+`stop-steps` metric well above baseline's (which rarely fully stops at all) and
+is the likely reason fuel/jerk don't come out clearly ahead of baseline.
+
+**Root-cause hypothesis (not yet fixed):** the gap-error term is deliberately
+clipped (see Reward design) so that being 34m too far from the leader costs the
+same as being 600m too far — necessary to prevent the reward exploding when the
+leader is legitimately far away, but it also means there's no reward *gradient*
+pulling the agent to resume progress once it's already stopped and the leader is
+long gone; only the flat `w_time`/`w_prog` terms are left to do that job. This
+specific state region — stopped, leader-irrelevantly-far, no red light nearby —
+combined with `gap_present=1` still being set (the flag doesn't distinguish "far
+but present" from "close") appears to have been under-visited or badly
+reinforced during training, possibly for the same underlying reason seed 2 never
+escaped the idle optimum at all (pitfall #5/#7): once stopped, escaping is a
+low-density event in the replay buffer, and if early escape attempts from this
+particular state pocket happened to end in a timeout during training, the critic
+would have learned to undervalue resuming *specifically from this state*, even
+though it correctly values resuming from other states. This was not resolved
+within the compute budget spent on this task; a follow-up fix would likely
+involve either loosening the gap-error clip's flat region, adding an explicit
+"no justification to be stopped" penalty, or extending training well past 400k
+steps with reward shaping targeted at this exact state region.
