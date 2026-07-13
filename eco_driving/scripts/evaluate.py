@@ -32,7 +32,9 @@ PHASE_COLOR = {GREEN: "#2ca02c", YELLOW: "#ffbf00", RED: "#d62728"}
 
 # ---------------------------------------------------------------------------
 def load_policy(model_dir):
-    model = SAC.load(os.path.join(model_dir, "best_model.zip"), device="cpu")
+    model_path = os.path.join(model_dir, "best_model.zip")
+    print(f"[load_policy] loading {model_path}")
+    model = SAC.load(model_path, device="cpu")
     with open(os.path.join(model_dir, "vecnormalize.pkl"), "rb") as f:
         vecnorm = pickle.load(f)
     return model, vecnorm
@@ -100,8 +102,14 @@ def rollout_policy(cfg, seed, model, vecnorm):
 def rollout_baseline(cfg, seed, driver: IDMBaselineDriver):
     def act_fn(env, sig, gap, rel_v):
         dist_to_signal = cfg.signal_pos - env.x
-        return driver.act(env.v, gap, rel_v, env.leader.present, dist_to_signal,
-                           sig.phase, sig.time_to_change)
+        target_a = driver.act(env.v, gap, rel_v, env.leader.present, dist_to_signal,
+                               sig.phase, sig.time_to_change)
+        # The env's action is Delta-a (see EcoDrivingEnv docstring); the baseline
+        # reasons in absolute target acceleration, so convert. Passing an
+        # unclipped delta reproduces a_cmd = clip(target_a, a_min, a_max) exactly
+        # -- the baseline's behavior is therefore byte-identical to before the
+        # action-space reparameterization.
+        return target_a - env.a_prev
     return rollout(cfg, seed, act_fn)
 
 
@@ -137,6 +145,17 @@ def summarize_metric(summaries, key):
     return float(np.mean(vals)), float(np.std(vals))
 
 
+def paired_fuel_deltas(baseline_summaries, policy_summaries):
+    """(fuel_sac - fuel_base)/fuel_base for scenarios where both baseline and
+    policy arrived, matched by scenario order (both iterate SCENARIO_SEEDS)."""
+    deltas = []
+    for b, p in zip(baseline_summaries, policy_summaries):
+        assert b["seed"] == p["seed"]
+        if b["arrived"] and p["arrived"]:
+            deltas.append((p["total_fuel_mL"] - b["total_fuel_mL"]) / b["total_fuel_mL"])
+    return deltas
+
+
 def print_report(baseline_summaries, policy_summaries_by_seed):
     print("\n" + "=" * 70)
     print("BASELINE (IDM + late braking)")
@@ -155,6 +174,7 @@ def print_report(baseline_summaries, policy_summaries_by_seed):
     print("SAC POLICY (per seed, mean +/- std over scenarios; then mean +/- std over seeds)")
     print("=" * 70)
     per_seed_means = defaultdict(list)
+    fuel_delta_by_seed = {}
     for seed, summaries in policy_summaries_by_seed.items():
         n_arrived = sum(s["arrived"] for s in summaries)
         n_redrun = sum(s["red_run"] for s in summaries)
@@ -167,10 +187,21 @@ def print_report(baseline_summaries, policy_summaries_by_seed):
             print(f"     {key:16s}: {m:8.2f} +/- {sd:6.2f}")
             per_seed_means[key].append(m)
 
+        deltas = paired_fuel_deltas(baseline_summaries, summaries)
+        fuel_delta_by_seed[seed] = deltas
+        mean_delta = float(np.mean(deltas)) * 100 if deltas else float("nan")
+        print(f"     paired fuel delta vs baseline: {mean_delta:+.1f}%  (n={len(deltas)} paired arrivals)")
+
     print("\n  -- across seeds --")
     for key in ["travel_time_s", "total_fuel_mL", "stop_steps", "max_abs_jerk"]:
         vals = per_seed_means[key]
         print(f"     {key:16s}: {np.mean(vals):8.2f} +/- {np.std(vals):6.2f}  (seed means: {['%.2f' % v for v in vals]})")
+    seed_mean_deltas = [float(np.mean(d)) * 100 for d in fuel_delta_by_seed.values() if d]
+    if seed_mean_deltas:
+        print(f"     paired fuel delta   : {np.mean(seed_mean_deltas):+7.1f}% +/- {np.std(seed_mean_deltas):5.1f}%  "
+              f"(seed means: {['%+.1f%%' % v for v in seed_mean_deltas]})")
+
+    return fuel_delta_by_seed
 
 
 def save_csv(baseline_summaries, policy_summaries_by_seed, path):
@@ -189,6 +220,125 @@ def save_csv(baseline_summaries, policy_summaries_by_seed, path):
         writer.writeheader()
         writer.writerows(rows)
     print(f"\nSaved per-scenario metrics to {path}")
+
+
+def save_paired_fuel_csv(baseline_summaries, policy_summaries_by_seed, path):
+    import csv
+    rows = []
+    for seed, summaries in policy_summaries_by_seed.items():
+        for b, p in zip(baseline_summaries, summaries):
+            both_arrived = b["arrived"] and p["arrived"]
+            delta = (p["total_fuel_mL"] - b["total_fuel_mL"]) / b["total_fuel_mL"] if both_arrived else None
+            rows.append(dict(policy_seed=seed, scenario_seed=b["seed"], both_arrived=both_arrived,
+                              fuel_base_mL=b["total_fuel_mL"], fuel_sac_mL=p["total_fuel_mL"],
+                              fuel_delta_pct=None if delta is None else delta * 100))
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Saved paired fuel-delta table to {path}")
+
+
+def check_acceptance_criteria(baseline_summaries, policy_summaries_by_seed, seeds):
+    """Print PASS/FAIL for each of the 7 acceptance criteria from the task spec."""
+    print("\n" + "=" * 70)
+    print("ACCEPTANCE CRITERIA")
+    print("=" * 70)
+    results = {}
+
+    # 1. Arrival: every seed >= 9/10, zero red-runs, zero collisions.
+    arrival_ok = True
+    for seed, summaries in policy_summaries_by_seed.items():
+        n_arrived = sum(s["arrived"] for s in summaries)
+        n_redrun = sum(s["red_run"] for s in summaries)
+        n_collision = sum(s["collision"] for s in summaries)
+        seed_ok = n_arrived >= 9 and n_redrun == 0 and n_collision == 0
+        arrival_ok &= seed_ok
+        print(f"  [1. Arrival]     seed {seed}: {n_arrived}/10 arrived, {n_redrun} red-runs, "
+              f"{n_collision} collisions -> {'PASS' if seed_ok else 'FAIL'}")
+    results["1_arrival"] = arrival_ok
+
+    # 2. Stops: mean stop-steps per seed <= 15.
+    stops_ok = True
+    for seed, summaries in policy_summaries_by_seed.items():
+        m, _ = summarize_metric(summaries, "stop_steps")
+        seed_ok = m <= 15.0
+        stops_ok &= seed_ok
+        print(f"  [2. Stops]       seed {seed}: mean stop-steps={m:.1f} (<=15) -> {'PASS' if seed_ok else 'FAIL'}")
+    results["2_stops"] = stops_ok
+
+    # 3. Fuel: paired delta <= -5% for >= 2 of 3 seeds, no seed worse than +2%.
+    n_seeds = len(policy_summaries_by_seed)
+    n_good = 0
+    fuel_ok = True
+    for seed, summaries in policy_summaries_by_seed.items():
+        deltas = paired_fuel_deltas(baseline_summaries, summaries)
+        mean_delta = float(np.mean(deltas)) if deltas else float("nan")
+        good = mean_delta <= -0.05
+        bad = mean_delta > 0.02
+        n_good += int(good)
+        if bad:
+            fuel_ok = False
+        print(f"  [3. Fuel]        seed {seed}: paired delta={mean_delta*100:+.1f}% "
+              f"({'<=-5% GOOD' if good else ('>+2% BAD' if bad else 'neutral')})")
+    fuel_ok = fuel_ok and (n_good >= 2)
+    print(f"  [3. Fuel]        {n_good}/{n_seeds} seeds <=-5%, all seeds <=+2%? "
+          f"-> {'PASS' if fuel_ok else 'FAIL'}")
+    results["3_fuel"] = fuel_ok
+
+    # 4. Time: mean travel time within +10s of baseline per seed.
+    base_time, _ = summarize_metric(baseline_summaries, "travel_time_s")
+    time_ok = True
+    for seed, summaries in policy_summaries_by_seed.items():
+        m, _ = summarize_metric(summaries, "travel_time_s")
+        seed_ok = m <= base_time + 10.0
+        time_ok &= seed_ok
+        print(f"  [4. Time]        seed {seed}: mean time={m:.1f}s vs baseline {base_time:.1f}s "
+              f"(+10s budget) -> {'PASS' if seed_ok else 'FAIL'}")
+    results["4_time"] = time_ok
+
+    # 5. Smoothness: mean max|jerk| <= baseline's.
+    base_jerk, _ = summarize_metric(baseline_summaries, "max_abs_jerk")
+    jerk_ok = True
+    for seed, summaries in policy_summaries_by_seed.items():
+        m, _ = summarize_metric(summaries, "max_abs_jerk")
+        seed_ok = m <= base_jerk
+        jerk_ok &= seed_ok
+        print(f"  [5. Smoothness]  seed {seed}: mean max|jerk|={m:.2f} vs baseline {base_jerk:.2f} "
+              f"-> {'PASS' if seed_ok else 'FAIL'}")
+    results["5_smoothness"] = jerk_ok
+
+    print(f"\n  [6. Following]   see results/plots/gap_vs_time.png (visual/manual check)")
+    print(f"  [7. Stability]   see learning_curves.png + per-seed evaluations.npz "
+          f"(checked separately in evaluate_stability())")
+
+    overall = all(results.values())
+    print(f"\n  OVERALL (criteria 1-5): {'PASS' if overall else 'FAIL'}")
+    return results
+
+
+def check_training_stability(seeds, model_dir_fn):
+    """Criterion 7: last three EvalCallback points within 15% of the best point."""
+    print("\n" + "=" * 70)
+    print("CRITERION 7: TRAINING STABILITY (last 3 eval points vs best)")
+    print("=" * 70)
+    all_ok = True
+    for seed in seeds:
+        npz_path = os.path.join(model_dir_fn(seed), "evaluations.npz")
+        if not os.path.exists(npz_path):
+            print(f"  seed {seed}: no evaluations.npz found, skipping")
+            continue
+        data = np.load(npz_path)
+        results_arr = data["results"].mean(axis=1)
+        best = np.max(results_arr)
+        last3 = results_arr[-3:]
+        rel_dev = np.abs(last3 - best) / max(abs(best), 1e-6)
+        seed_ok = bool(np.all(rel_dev <= 0.15))
+        all_ok &= seed_ok
+        print(f"  seed {seed}: best={best:.1f}  last3={list(np.round(last3, 1))}  "
+              f"rel_dev={list(np.round(rel_dev, 3))} -> {'PASS' if seed_ok else 'FAIL'}")
+    print(f"\n  OVERALL: {'PASS' if all_ok else 'FAIL'}")
+    return all_ok
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +442,33 @@ def plot_learning_curves(seeds, path):
     plt.close(fig)
 
 
+def check_gap_tracking(policy_traces_by_seed, cfg, sustained_thresh_s=10.0):
+    """Criterion 6: gap should track the desired headway, not sit in a sustained
+    excursion above 2.5x desired while the leader is present -- checked across
+    ALL scenario traces (not just the one used for the overlay plot)."""
+    print("\n" + "=" * 70)
+    print("CRITERION 6: CAR-FOLLOWING (gap tracks desired headway)")
+    print("=" * 70)
+    all_ok = True
+    for seed, traces in policy_traces_by_seed.items():
+        max_run_steps = 0
+        for trace in traces.values():
+            run = 0
+            for present, gap, desired in zip(trace["leader_present"], trace["gap"], trace["desired_gap"]):
+                if present and gap > 2.5 * desired:
+                    run += 1
+                    max_run_steps = max(max_run_steps, run)
+                else:
+                    run = 0
+        max_run_s = max_run_steps * cfg.dt
+        seed_ok = max_run_s <= sustained_thresh_s
+        all_ok &= seed_ok
+        print(f"  seed {seed}: longest sustained gap > 2.5x-desired excursion = {max_run_s:.1f}s "
+              f"(<= {sustained_thresh_s:.0f}s) -> {'PASS' if seed_ok else 'FAIL'}")
+    print(f"\n  OVERALL: {'PASS' if all_ok else 'FAIL'}")
+    return all_ok
+
+
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
@@ -308,6 +485,12 @@ def main():
 
     print_report(baseline_summaries, policy_summaries_by_seed)
     save_csv(baseline_summaries, policy_summaries_by_seed, os.path.join(RESULTS_DIR, "summary_metrics.csv"))
+    save_paired_fuel_csv(baseline_summaries, policy_summaries_by_seed,
+                         os.path.join(RESULTS_DIR, "paired_fuel_delta.csv"))
+
+    check_acceptance_criteria(baseline_summaries, policy_summaries_by_seed, args.seeds)
+    check_gap_tracking(policy_traces_by_seed, cfg)
+    check_training_stability(args.seeds, lambda s: os.path.join(MODELS_DIR, f"sac_seed{s}"))
 
     plot_seed = args.plot_seed or args.seeds[0]
     # pick a scenario with a leader present for the gap plot; else fall back to first

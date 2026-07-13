@@ -19,9 +19,13 @@ def rollout_baseline(seed: int, cfg: EnvConfig, driver: IDMBaselineDriver):
         dist_to_signal = cfg.signal_pos - env.x
         sig_state = env.signal.state(env.t)
         gap, rel_v = env.leader.gap_and_relv(env.x, env.v)
-        a = driver.act(env.v, gap, rel_v, env.leader.present, dist_to_signal,
-                        sig_state.phase, sig_state.time_to_change)
-        obs, r, terminated, truncated, info = env.step(np.array([a], dtype=np.float32))
+        target_a = driver.act(env.v, gap, rel_v, env.leader.present, dist_to_signal,
+                               sig_state.phase, sig_state.time_to_change)
+        # env action is Delta-a; convert the driver's absolute target accel (see
+        # EcoDrivingEnv docstring / evaluate.py::rollout_baseline for why this
+        # reproduces the exact same a_cmd as the pre-reparameterization baseline).
+        delta = target_a - env.a_prev
+        obs, r, terminated, truncated, info = env.step(np.array([delta], dtype=np.float32))
         total_r += r
         if info["v"] < 0.3:
             stops += 1

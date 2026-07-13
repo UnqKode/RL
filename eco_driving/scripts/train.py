@@ -22,6 +22,13 @@ MODELS_DIR = os.path.join(ROOT, "models")
 RESULTS_DIR = os.path.join(ROOT, "results")
 
 
+def linear_schedule(start: float, end: float):
+    """SB3 learning-rate schedule: input is progress_remaining, 1.0 (start) -> 0.0 (end)."""
+    def schedule(progress_remaining: float) -> float:
+        return end + (start - end) * progress_remaining
+    return schedule
+
+
 def make_env(cfg: EnvConfig, monitor_path: str = None):
     def _init():
         env = EcoDrivingEnv(cfg)
@@ -107,17 +114,21 @@ def train_one_seed(seed: int, total_timesteps: int, eval_freq: int, n_eval_episo
     eval_venv = DummyVecEnv([make_env(env_cfg, eval_monitor_path)])
     eval_venv = VecNormalize(eval_venv, norm_obs=True, norm_reward=False, clip_obs=10.0, training=False)
 
+    learning_starts = train_cfg.learning_starts_overrides.get(seed, train_cfg.learning_starts)
+    if learning_starts != train_cfg.learning_starts:
+        print(f"[seed {seed}] using learning_starts override = {learning_starts}")
+
     model = SAC(
         "MlpPolicy",
         train_venv,
-        learning_rate=train_cfg.learning_rate,
+        learning_rate=linear_schedule(train_cfg.lr_start, train_cfg.lr_end),
         buffer_size=train_cfg.buffer_size,
         batch_size=train_cfg.batch_size,
         gamma=train_cfg.gamma,
         tau=train_cfg.tau,
         train_freq=train_cfg.train_freq,
         gradient_steps=train_cfg.gradient_steps,
-        learning_starts=train_cfg.learning_starts,
+        learning_starts=learning_starts,
         ent_coef=train_cfg.ent_coef,
         target_entropy=train_cfg.target_entropy,
         policy_kwargs=dict(net_arch=list(train_cfg.net_arch)),

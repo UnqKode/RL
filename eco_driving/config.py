@@ -18,6 +18,11 @@ class EnvConfig:
     a_max: float = 2.5             # m/s^2, max acceleration
     v0_min: float = 4.0            # m/s, episode start speed range (already approaching)
     v0_max: float = 12.0           # m/s
+    # The RL policy's action is a rate-of-change of acceleration (Delta-a), not
+    # acceleration directly: a_cmd = clip(a_prev + delta_a, a_min, a_max). This
+    # bounds jerk structurally (a smoothness guarantee "by construction") rather
+    # than relying solely on the jerk penalty to discourage abrupt changes.
+    delta_a_max: float = 1.5       # m/s^2 per step, max |change in commanded accel|
 
     # --- Vehicle physical parameters ---
     mass: float = 1500.0           # kg
@@ -61,17 +66,47 @@ class EnvConfig:
 
     # --- Reward weights ---
     w_prog: float = 0.2
-    w_fuel: float = 1.0
+    # Round 3 (B1): raised 1.0 -> 1.5 to push harder for a genuine fuel
+    # improvement now that red-running is prevented structurally (action
+    # masking) rather than relying on reward balance alone (see CHANGES.md).
+    w_fuel: float = 1.5
     w_time: float = 0.6
-    w_jerk: float = 0.15
+    # Reduced from 0.15: comfort is now largely guaranteed structurally by the
+    # delta-a rate limit above, so the jerk weight no longer needs to be large
+    # enough on its own to discourage abrupt changes -- a large w_jerk was what
+    # made re-launching from a stop feel expensive and encouraged loitering.
+    w_jerk: float = 0.05
+    # ABLATION (see CHANGES.md): reverted C5 (was w_gap=0.20, clip_high=50) back
+    # to the pre-C5 values to test whether the strengthened gap-following pull
+    # was contributing to the red-light-running regression found after C1-C7.
     w_gap: float = 0.12
     gap_err_clip_low: float = -15.0
     gap_err_clip_high: float = 30.0
     gap_err_scale: float = 10.0
 
+    # Penalty for stopping (v < 0.5) without a valid reason (not near a red/
+    # yellow signal within stopping range, and not close behind a present
+    # leader) -- removes the "stop forever" / "loiter at 0" comfortable basin.
+    w_idle: float = 1.0
+    idle_v_thresh: float = 0.5      # m/s, below this counts as "stopped"
+    idle_near_line: float = 10.0    # m, always a valid reason to be stopped this close on red/yellow
+    idle_decel_frac: float = 0.6    # fraction of |a_min| assumed available for the stopping-range calc
+    idle_leader_gap_mult: float = 2.0  # gap < mult * desired_gap counts as a valid leader-following reason
+
     r_arrival: float = 40.0
     r_timeout: float = -30.0
-    r_violation: float = -200.0
+    # Round 3 (A2): raised -200 -> -1000 as a belt-and-braces backstop. Primary
+    # defense against red-running is now the action mask in EcoDrivingEnv.step
+    # (see mask_* fields below), which should make this penalty almost never
+    # trigger during training.
+    r_violation: float = -1000.0
+
+    # --- Round 3 (A1): safety mask -- if even a worst-case this-step action
+    # (full a_max) would leave insufficient room to brake to a stop before a
+    # red/yellow stop line, the commanded acceleration is overridden to a_min
+    # regardless of what the policy chose. Makes red-running structurally
+    # unreachable rather than merely discouraged by reward. ---
+    mask_enabled: bool = True
 
     # --- Misc ---
     seed: int = 0
@@ -86,7 +121,12 @@ class TrainConfig:
     total_timesteps: int = 400_000
     eval_freq: int = 10_000
     n_eval_episodes: int = 8
-    learning_rate: float = 3e-4
+    # Linear learning-rate decay (SB3 schedule input is "progress_remaining",
+    # 1.0 at the start down to 0.0 at the end) to stabilize late training --
+    # the previous constant 3e-4 let seeds visibly degrade in their final 10k
+    # steps (see CHANGES.md).
+    lr_start: float = 3e-4
+    lr_end: float = 1e-4
     buffer_size: int = 300_000
     batch_size: int = 256
     gamma: float = 0.99
@@ -95,10 +135,13 @@ class TrainConfig:
     gradient_steps: int = 1
     learning_starts: int = 5_000
     ent_coef: str = "auto"
-    # Default SAC "auto" target entropy is -action_dim = -1 for this 1-D action
-    # space; on this task that can decay too fast for some seeds, collapsing
-    # exploration before the policy escapes the "never move" local optimum (see
-    # README pitfalls). -0.3 (less negative) keeps a higher entropy floor longer.
-    target_entropy: float = -0.3
+    # -1.5 (more negative than SB3's default auto target of -action_dim = -1)
+    # damps late-run entropy-driven policy drift now that the idle/loiter local
+    # optimum is handled directly by w_idle rather than needing extra entropy
+    # to escape it.
+    target_entropy: float = -1.5
     net_arch: tuple = (256, 256)
     seeds: tuple = (0, 1, 2)
+    # Per-seed override for learning_starts (fallback if a seed collapses into
+    # the idle basin again despite w_idle/GLOSA/rate-limited actions).
+    learning_starts_overrides: dict = field(default_factory=dict)
