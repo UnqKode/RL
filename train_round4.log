@@ -1,0 +1,129 @@
+2026-07-17 19:57:49.903230: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+C:\Users\Manas Yadav\AppData\Local\Programs\Python\Python313\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.5.0) or chardet (7.4.0.post2)/charset_normalizer (3.4.3) doesn't match a supported version!
+  warnings.warn(
+2026-07-17 19:57:59.371367: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+Using cpu device
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 246      |
+|    ep_rew_mean     | -390     |
+| time/              |          |
+|    episodes        | 4        |
+|    fps             | 1539     |
+|    time_elapsed    | 0        |
+|    total_timesteps | 982      |
+---------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 254      |
+|    ep_rew_mean     | -343     |
+| time/              |          |
+|    episodes        | 8        |
+|    fps             | 1670     |
+|    time_elapsed    | 1        |
+|    total_timesteps | 2033     |
+---------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 261      |
+|    ep_rew_mean     | -403     |
+| time/              |          |
+|    episodes        | 12       |
+|    fps             | 1609     |
+|    time_elapsed    | 1        |
+|    total_timesteps | 3130     |
+---------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 265      |
+|    ep_rew_mean     | -431     |
+| time/              |          |
+|    episodes        | 16       |
+|    fps             | 1587     |
+|    time_elapsed    | 2        |
+|    total_timesteps | 4244     |
+---------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 266      |
+|    ep_rew_mean     | -452     |
+| time/              |          |
+|    episodes        | 20       |
+|    fps             | 679      |
+|    time_elapsed    | 7        |
+|    total_timesteps | 5327     |
+| train/             |          |
+|    actor_loss      | 1.74     |
+|    critic_loss     | 0.786    |
+|    ent_coef        | 0.91     |
+|    ent_coef_loss   | -0.185   |
+|    learning_rate   | 0.000297 |
+|    n_updates       | 326      |
+---------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 275      |
+|    ep_rew_mean     | -451     |
+| time/              |          |
+|    episodes        | 24       |
+|    fps             | 204      |
+|    time_elapsed    | 32       |
+|    total_timesteps | 6607     |
+| train/             |          |
+|    actor_loss      | 6.67     |
+|    critic_loss     | 1.58     |
+|    ent_coef        | 0.634    |
+|    ent_coef_loss   | -0.803   |
+|    learning_rate   | 0.000297 |
+|    n_updates       | 1606     |
+---------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 282      |
+|    ep_rew_mean     | -459     |
+| time/              |          |
+|    episodes        | 28       |
+|    fps             | 140      |
+|    time_elapsed    | 56       |
+|    total_timesteps | 7887     |
+| train/             |          |
+|    actor_loss      | 12.4     |
+|    critic_loss     | 5.15     |
+|    ent_coef        | 0.443    |
+|    ent_coef_loss   | -1.32    |
+|    learning_rate   | 0.000296 |
+|    n_updates       | 2886     |
+---------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 283      |
+|    ep_rew_mean     | -448     |
+| time/              |          |
+|    episodes        | 32       |
+|    fps             | 116      |
+|    time_elapsed    | 77       |
+|    total_timesteps | 9055     |
+| train/             |          |
+|    actor_loss      | 17.9     |
+|    critic_loss     | 4.13     |
+|    ent_coef        | 0.322    |
+|    ent_coef_loss   | -1.65    |
+|    learning_rate   | 0.000295 |
+|    n_updates       | 4054     |
+---------------------------------
+Eval num_timesteps=10000, episode_reward=-234.60 +/- 92.02
+Episode length: 242.88 +/- 22.87
+---------------------------------
+| eval/              |          |
+|    mean_ep_length  | 243      |
+|    mean_reward     | -235     |
+| time/              |          |
+|    total_timesteps | 10000    |
+| train/             |          |
+|    actor_loss      | 20.9     |
+|    critic_loss     | 5.95     |
+|    ent_coef        | 0.249    |
+|    ent_coef_loss   | -1.9     |
+|    learning_rate   | 0.000295 |
+|    n_updates       | 4999     |
+---------------------------------

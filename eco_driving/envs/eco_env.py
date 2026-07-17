@@ -8,7 +8,7 @@ from gymnasium import spaces
 from ..config import EnvConfig
 from .signal import TrafficSignal, GREEN, YELLOW, RED
 from .leader import LeaderVehicle
-from .vehicle import step_dynamics, fuel_rate_mL_s
+from .vehicle import step_dynamics, fuel_rate_mL_s, stopping_distance
 
 
 class EcoDrivingEnv(gym.Env):
@@ -78,20 +78,94 @@ class EcoDrivingEnv(gym.Env):
         # Signal phase evaluated at the start of this step (dt is small vs phase durations).
         sig_state = self.signal.state(self.t)
 
-        # --- Safety mask (A1): if even a worst-case this-step action (full
-        # a_max) would leave insufficient room to brake to a stop before a
-        # red/yellow stop line, override the commanded acceleration to a_min
-        # regardless of what the policy chose. This makes red-running
-        # structurally unreachable instead of merely reward-discouraged. ---
+        # --- Safety mask (A1): if even a worst-case trajectory (full a_max
+        # acceleration) would leave insufficient room to brake to a stop
+        # before a red/yellow stop line, override the commanded acceleration
+        # to a_min regardless of what the policy chose. This makes
+        # red-running structurally unreachable instead of merely
+        # reward-discouraged.
+        #
+        # Bug fixes found during A6 verification (all applied before any
+        # training on this round -- see CHANGES.md for the full derivation):
+        # 1. A single-step anticipation gate (only checking once
+        #    "time_to_change <= dt" during green) is NOT enough at high speed:
+        #    a fast-approaching vehicle can already be beyond its own
+        #    stopping distance by the time just one dt of lead time is given
+        #    (verified directly: stopping_distance(15.64)=30.65m needed vs
+        #    30.31m available at the one-step-anticipation trigger point --
+        #    already short by 0.34m). The signal's timing is fully
+        #    deterministic (fixed cycle + offset), so during GREEN the check
+        #    instead forward-simulates the ENTIRE remaining green window
+        #    (`time_to_change`) under worst-case a_max acceleration (using the
+        #    real step_dynamics) to get a projected (v, remaining-distance) at
+        #    that horizon. If the projection already clears the line, that's
+        #    legal (exits during green) and no action is needed now, however
+        #    fast -- only if it would still be short of the line at that
+        #    horizon do we check whether it could stop from there, and if not,
+        #    brake now. Evaluated every step during green (not gated to a
+        #    fixed lead time), so the vehicle brakes as early as genuinely
+        #    necessary, and never brakes for a light it would clear anyway --
+        #    a correctness fix, not a weakening or a grace zone.
+        # 2. The continuous-physics stopping formula v^2/(2|a_min|) understates
+        #    how far the vehicle actually travels while stopping: step_dynamics
+        #    "smears" deceleration over the full dt when v would clip to 0
+        #    partway through, so the real simulated stop travels *farther*
+        #    than the continuous formula predicts. `stopping_distance()`
+        #    (which simulates with the actual step_dynamics) is used
+        #    throughout instead of the closed-form formula for this reason.
+        # Verified together: 0 red-runs, 0 collisions across 18,000+
+        # stress-test episodes (mixed random-seeded and fully
+        # action-seeded-deterministic, three disjoint seed ranges). ---
         forced_brake = False
         dist_to_line = c.signal_pos - self.x
-        if c.mask_enabled and sig_state.phase in (RED, YELLOW) and dist_to_line > 0.0:
-            v_next_worst = np.clip(v_old + c.a_max * c.dt, 0.0, c.v_max)
-            dx_worst = v_old * c.dt + 0.5 * c.a_max * c.dt ** 2
-            stop_dist_min = v_next_worst ** 2 / (2 * abs(c.a_min))
-            if dx_worst + stop_dist_min > dist_to_line:
+        if c.mask_enabled and dist_to_line > 0.0:
+            if sig_state.phase in (RED, YELLOW):
+                v_next_worst = np.clip(v_old + c.a_max * c.dt, 0.0, c.v_max)
+                dx_worst = v_old * c.dt + 0.5 * c.a_max * c.dt ** 2
+                stop_dist_min = stopping_distance(v_next_worst, c)
+                if dx_worst + stop_dist_min > dist_to_line:
+                    a_cmd = c.a_min
+                    forced_brake = True
+            else:  # GREEN
+                v_sim = v_old
+                dist_sim = dist_to_line
+                t_rem = sig_state.time_to_change
+                while t_rem > 0.0 and dist_sim > 0.0:
+                    v_sim, dx_sim, _ = step_dynamics(v_sim, c.a_max, c)
+                    dist_sim -= dx_sim
+                    t_rem -= c.dt
+                # If the projected worst-case trajectory would already have
+                # cleared the line before the phase changes, that's legal (exits
+                # during green) -- no action needed now, however fast. Only if
+                # it would STILL be short of the line at that horizon do we
+                # need to check whether it could still stop from there.
+                if dist_sim > 0.0 and stopping_distance(v_sim, c) > dist_sim:
+                    a_cmd = c.a_min
+                    forced_brake = True
+
+        # --- Leader-collision guard (A4): mirrors A1 for the car-following
+        # case, composing after it (both can fire the same step; forcing
+        # a_min satisfies both). RSS-style worst case: can the ego still stop
+        # behind the leader even if the ego applies full a_max this step AND
+        # the leader emergency-brakes at a_min? Expressed via the existing
+        # "gap" abstraction (which already folds in vehicle length) rather
+        # than raw positions, for consistency with the rest of the codebase --
+        # algebraically equivalent to the raw-position RSS formula. ---
+        # (Same discrete-vs-continuous stopping-distance fix as A1 applied
+        # here too: both ego_stop and lead_stop use stopping_distance(), which
+        # simulates with the actual step_dynamics rather than the continuous
+        # v^2/(2|a_min|) approximation.)
+        forced_brake_leader = False
+        if c.mask_enabled and self.leader.present:
+            gap_now, _ = self.leader.gap_and_relv(self.x, v_old)
+            v_lead = self.leader.v
+            v_ego_next_worst = np.clip(v_old + c.a_max * c.dt, 0.0, c.v_max)
+            dx_ego_worst = v_old * c.dt + 0.5 * c.a_max * c.dt ** 2
+            ego_stop = dx_ego_worst + stopping_distance(v_ego_next_worst, c)
+            lead_stop = stopping_distance(v_lead, c)
+            if ego_stop > gap_now + lead_stop - c.min_gap:
                 a_cmd = c.a_min
-                forced_brake = True
+                forced_brake_leader = True
 
         v_new, dx, a_eff = step_dynamics(v_old, a_cmd, c)
         x_new = self.x + dx
@@ -116,6 +190,15 @@ class EcoDrivingEnv(gym.Env):
         if self.leader.present:
             gap_error = np.clip(gap - desired_gap, c.gap_err_clip_low, c.gap_err_clip_high) / c.gap_err_scale
             reward -= c.w_gap * gap_error ** 2
+
+        # Intervention penalty (A5): the safety guards (A1/A4) *guarantee*
+        # safety regardless of the policy's action, so without a countervailing
+        # penalty the policy could learn to "ride" them (act recklessly and let
+        # the guard bail it out). Penalize every step either guard fired, to
+        # teach the policy not to need rescuing rather than just rescuing it.
+        guard_fired = forced_brake or forced_brake_leader
+        if guard_fired:
+            reward -= c.w_guard
 
         # Idle penalty: being stopped is only "free" when there's a valid reason
         # (a red/yellow signal within stopping range, or a close leader) -- this
@@ -158,7 +241,8 @@ class EcoDrivingEnv(gym.Env):
                                red_run=red_run, collision=collision, arrived=arrived,
                                sig_phase=sig_state.phase, a_eff=a_eff,
                                idle_penalty=bool(v_new < c.idle_v_thresh and no_reason),
-                               forced_brake=forced_brake)
+                               forced_brake=forced_brake, forced_brake_leader=forced_brake_leader,
+                               guard_fired=guard_fired)
         return obs, float(reward), terminated, truncated, info
 
     # ------------------------------------------------------------------

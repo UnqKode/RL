@@ -264,3 +264,98 @@ attempting a further isolation run unprompted. `models/sac_seed0_wfuel15/` and
 `models/sac_seed0_ablation_noC5/` are both kept on disk for comparison; neither
 is a passing result yet — the former is fuel-competitive-ish but crashes into
 the leader, the latter is fully safe but loses on fuel (+9.8%).
+
+## Round 4 plan: make collision safety structural, not reward-shaped
+
+**The decisive finding driving this round is in round 3's own sanity check:**
+under *fully random* actions, the environment produces 67-74/100 leader
+collisions **regardless of whether the signal mask (A1) is present**. Collision
+safety has never been structural — it has been held up entirely by reward
+shaping (the gap-following penalty), and rounds 2 and 3 each independently
+demonstrated that this reward-shaped safety breaks whenever *any other* weight
+in the reward moves (round 2: raising `w_gap`/clip caused red-running; round 3:
+raising `w_fuel` plausibly caused leader-collisions). The fix applied to
+red-running (A1: make it structurally unreachable via action masking) needs to
+be applied symmetrically to leader-collision. Per instruction, no isolation
+ablation of `w_fuel` is being run first — the guard removes the failure class
+outright, making that question moot for this round (it remains available later
+for an ablation table if wanted, off the critical path now).
+
+**A4 (leader-collision guard):** mirrors A1's structure — before applying the
+commanded acceleration (composing after the A1 signal check), compute a
+worst-case RSS-style bound: can the ego still stop behind the leader even if
+the ego applied full `a_max` this step *and* the leader emergency-brakes at
+`a_min`? If not, override `a_cmd = a_min` and flag `info["forced_brake_leader"]`.
+Deliberately conservative — no reaction-delay or comfort relaxation.
+
+**A5 (intervention penalty):** `w_guard=0.5` subtracted every step either guard
+(A1 or A4) fires, so the policy is taught not to *need* rescuing rather than
+learning to lean on it.
+
+**A6 (verification before training):** the 100-seed random-policy check must
+now show 0 collisions and 0 red-runs structurally, with no guard-induced
+deadlock (arrival ≥95%, or if legitimate random-policy timeouts occur, mean
+speed under random policy stays >2 m/s). This becomes a permanent assertion in
+`sanity_check.py`, not a one-off check.
+
+**B (kept, not re-litigated):** `w_fuel=1.5` stays — safe to keep now that
+collision-safety no longer depends on the reward balance around it. All other
+weights unchanged from round 3 (`w_gap=0.12`, clip `+30`, `r_violation=-1000`).
+
+Fresh retrain required (reward changed via A5, action-application path changed
+via A4) — seed 0, 400k steps, into `models/sac_seed0_round4/`. Acceptance this
+round: 0 collisions AND 0 red-runs (structural, must hold), ≥9/10 arrivals,
+guard-activation rate ≤2% of steps (higher = guard-riding, a failure even if
+safety holds), paired fuel delta ≤0% (legal-both-sides), travel time within
++10s of baseline, stop-steps ≤20, confirmed `best_model.zip` load. Results
+appended below once training completes.
+
+### Two guard bugs found and fixed by A6 *before* training (as instructed)
+
+The first A1+A4 implementation did not pass its own A6 verification cleanly —
+per this round's explicit instruction ("if collisions are not exactly zero, the
+guard condition has a bug — fix before training"), the same principle was
+applied to a rare non-zero red-run count too, and both were root-caused and
+fixed prior to any training:
+
+1. **Single-step anticipation was insufficient at high speed.** The first A1
+   version only extended its check to `GREEN` when `time_to_change <= dt` (one
+   step of lead time). Traced a failing case directly: at the trigger point
+   (`v=15.64 m/s`, `dist=30.31m`), the vehicle already needed
+   `stopping_distance(15.64)=30.65m` — already 0.34m short *before* the guard
+   had a chance to act. Fixed by forward-simulating the entire remaining green
+   window (`time_to_change`, using real `step_dynamics`) every step during
+   green, and only forcing a brake if the *projected* state at that horizon
+   would still be short of the line and unable to stop from there (explicitly
+   not forcing a brake if the projection shows the vehicle clearing the
+   intersection legally before red — an earlier draft of this fix conflated
+   the two and caused 0/100 arrivals via constant unnecessary braking, caught
+   immediately by A6's own arrival-rate check).
+2. **Continuous stopping-distance formula understates real stopping distance.**
+   `v^2/(2|a_min|)` assumes continuous braking; the env's actual `step_dynamics`
+   "smears" deceleration over the full `dt` when velocity would clip to 0
+   partway through a step, so the real simulated stop travels farther. Added
+   `stopping_distance()` to `vehicle.py` (simulates with the real
+   `step_dynamics`) and used it in both A1 and A4 in place of the closed-form
+   formula.
+
+Re-verified after both fixes: **0 red-runs, 0 collisions across 21,000+
+stress-test episodes** spanning three disjoint seed ranges (mixed
+random-action and fully action-seeded-deterministic runs), plus the standard
+100-seed `sanity_check.py` assertion. Training was not started until this held.
+
+### Note: the guards apply universally, including to the baseline
+
+Because A1/A4 are environment-level physical constraints (not specific to the
+RL policy), they also intervene on the baseline driver's commands when its
+worst-case trajectory would be unsafe — even though `idm_driver.py`'s decision
+logic itself is completely untouched. Observed effect: baseline's `max|jerk|`
+in leader-present scenarios rose from ~3-8 (round 3) to ~10.3-10.7 (this
+round's `baseline_smoke.py`), since the RSS-style guard's worst-case assumption
+(ego full accel + leader emergency-brake simultaneously) is deliberately more
+conservative than the baseline's own gentler car-following logic, which had
+already been extensively verified collision-free (200+ seeds, rounds 1-3)
+without any guard. This is expected, not a bug: comparisons *within* this round
+remain fair (baseline and policy are evaluated under the identical guarded
+environment), but the baseline's absolute jerk number is not directly
+comparable to earlier rounds' recorded baseline stats.

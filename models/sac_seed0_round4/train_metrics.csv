@@ -1,0 +1,2 @@
+timesteps,mean_reward,mean_fuel_mL,mean_travel_time_s,mean_stop_steps,mean_max_abs_jerk
+10000,-185.1169130930066,85.3349778381513,120.5,5.75,9.342101067304611

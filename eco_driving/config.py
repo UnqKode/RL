@@ -101,12 +101,18 @@ class EnvConfig:
     # trigger during training.
     r_violation: float = -1000.0
 
-    # --- Round 3 (A1): safety mask -- if even a worst-case this-step action
-    # (full a_max) would leave insufficient room to brake to a stop before a
-    # red/yellow stop line, the commanded acceleration is overridden to a_min
-    # regardless of what the policy chose. Makes red-running structurally
-    # unreachable rather than merely discouraged by reward. ---
+    # --- Round 3 (A1) / Round 4 (A4): safety masks -- if even a worst-case
+    # this-step action (full a_max) would leave insufficient room to (a) brake
+    # to a stop before a red/yellow stop line, or (b) stop behind the leader
+    # even if the leader emergency-brakes, the commanded acceleration is
+    # overridden to a_min regardless of what the policy chose. Makes both
+    # red-running and leader-collision structurally unreachable rather than
+    # merely discouraged by reward (round-3's own sanity check showed reward-
+    # shaped safety breaks whenever an unrelated weight moves). ---
     mask_enabled: bool = True
+    # Round 4 (A5): penalty applied whenever either guard fires, so the policy
+    # is taught not to need rescuing rather than learning to ride the guard.
+    w_guard: float = 0.5
 
     # --- Misc ---
     seed: int = 0

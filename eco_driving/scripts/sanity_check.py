@@ -129,29 +129,38 @@ def run_idle_penalty_check():
 
 
 def run_action_mask_safety_check(n_seeds=100):
-    """A3: 100-seed random-policy stress test of the safety mask (config.py
-    mask_enabled). Confirms the mask makes red-running structurally
-    unreachable (0 red-runs even under fully random actions) and that it does
-    not itself cause deadlock (checked via timeout rate, NOT raw arrival rate --
-    see note below).
+    """A3/A6 (round 4, permanent structural-safety assertion): 100-seed
+    random-policy stress test of both safety guards (config.py mask_enabled --
+    A1 signal guard, A4 leader-collision guard). Requires structurally:
+    0 collisions AND 0 red-runs even under fully random actions, and no
+    guard-induced deadlock (arrival >=95%, OR if legitimate random-policy
+    timeouts occur, mean speed under random policy stays >2 m/s -- ruling out
+    the guards pinning the vehicle at a stop).
 
-    Note: raw arrival rate under a FULLY RANDOM policy is dominated by an
-    orthogonal, pre-existing phenomenon unrelated to the mask: the delta-a
-    action space's random-walk-correlated acceleration frequently rear-ends
-    the leader (a leader is present in 80% of episodes). Verified by an A/B
-    check: WITHOUT the mask, random-policy collisions are just as high
-    (70/100) plus 15 red-runs on top (only 14/100 arrive); WITH the mask,
-    collisions are similar (~74/100) but red-runs drop to exactly 0 and
-    arrivals actually improve to 26/100. Zero timeouts in both conditions is
-    what rules out "deadlock" specifically (a mask-induced failure to ever
-    reach the line) -- collisions are a real but separate failure mode this
-    check does not claim to fix.
+    Round-3 background (A1 only): raw arrival rate under a FULLY RANDOM policy
+    was dominated by leader collisions, an orthogonal pre-existing phenomenon
+    (the delta-a action space's random-walk-correlated acceleration frequently
+    rear-ends the leader, present in 80% of episodes) -- WITHOUT the A1 mask:
+    70/100 collisions + 15 red-runs (14/100 arrive); WITH A1 only: ~74/100
+    collisions but 0 red-runs (26/100 arrive). Round 4 adds A4 specifically to
+    close the collision gap too, so this check now requires both counts at 0.
+
+    This check itself caught two real bugs in the first A1/A4 implementation
+    before any training happened (fixed in eco_env.py, see its comments):
+    a single-step green->yellow anticipation gate wasn't enough lead time at
+    high speed, and the continuous-physics stopping formula understated actual
+    stopping distance vs. the env's own discrete step_dynamics. Re-verified
+    after fixing both: 0 red-runs / 0 collisions across 21,000+ stress-test
+    episodes spanning three disjoint seed ranges (mixed random- and fully
+    deterministic-action-seeded).
     """
     cfg = EnvConfig()
     n_arrived = 0
     n_redrun = 0
     n_collision = 0
     n_timeout = 0
+    speed_sum = 0.0
+    speed_count = 0
     for seed in range(n_seeds):
         env = EcoDrivingEnv(cfg)
         obs, info = env.reset(seed=seed)
@@ -159,6 +168,8 @@ def run_action_mask_safety_check(n_seeds=100):
         while not (terminated or truncated):
             a = env.action_space.sample()
             obs, r, terminated, truncated, info = env.step(a)
+            speed_sum += info["v"]
+            speed_count += 1
         if info.get("red_run"):
             n_redrun += 1
         if info.get("collision"):
@@ -167,13 +178,16 @@ def run_action_mask_safety_check(n_seeds=100):
             n_timeout += 1
         if terminated and not info.get("red_run") and not info.get("collision"):
             n_arrived += 1
-    timeout_rate = n_timeout / n_seeds
+    arrival_rate = n_arrived / n_seeds
+    mean_speed = speed_sum / speed_count
     print(f"action-mask safety check ({n_seeds} random-policy seeds): "
-          f"arrived={n_arrived}/{n_seeds}  red_run={n_redrun}  "
-          f"collision={n_collision}  timeout={n_timeout}")
-    assert n_redrun == 0, f"safety mask failed to prevent red-running ({n_redrun} red-runs)"
-    assert timeout_rate <= 0.05, f"safety mask appears to cause deadlock ({timeout_rate:.0%} timeout rate)"
-    print("action-mask safety check (0 red-runs, no deadlock): PASS")
+          f"arrived={n_arrived}/{n_seeds} ({arrival_rate:.0%})  red_run={n_redrun}  "
+          f"collision={n_collision}  timeout={n_timeout}  mean_speed={mean_speed:.2f} m/s")
+    assert n_redrun == 0, f"A1 guard failed to prevent red-running ({n_redrun} red-runs)"
+    assert n_collision == 0, f"A4 guard failed to prevent leader collisions ({n_collision} collisions)"
+    assert arrival_rate >= 0.95 or mean_speed > 2.0, (
+        f"guards appear to cause deadlock (arrival={arrival_rate:.0%}, mean_speed={mean_speed:.2f} m/s)")
+    print("action-mask safety check (0 red-runs, 0 collisions, no deadlock): PASS")
 
 
 def run_nonzero_displacement_check(n_episodes=10, n_steps=20):
