@@ -67,6 +67,39 @@ a comfort improvement. This wasn't a round-4/5 pass/fail criterion, but it
 would be relevant to any claim that the policy is unambiguously better across
 all three original objectives (fuel, time, comfort).
 
+## Round 6, Task 1: jerk decomposition — the caveat is partly, not fully, a guard artifact
+
+Hypothesis: a single guard override forces `a_min=-4`, producing a one-step
+jerk spike that a single `max|jerk|` statistic is especially sensitive to.
+Re-rolled all 10 scenarios per seed, pooling every step, and computed
+max|jerk| with guard-firing steps (and the step immediately after, since the
+recovery transition is also elevated) excluded, plus the 95th-percentile
+|jerk| over all steps. Full data: `results/round4/jerk_decomposition.csv`.
+
+| driver | max\|jerk\| (all steps) | max\|jerk\| (guard-excluded) | p95 \|jerk\| | steps excluded |
+|---|---|---|---|---|
+| baseline (unguarded) | 4.23 | 4.23 | 0.91 | 0/1865 |
+| seed 0 | 8.07 | 4.63 | 1.45 | 36/1877 |
+| seed 1 | 11.25 | 4.72 | 1.34 | 39/1925 |
+| seed 2 | 10.34 | 4.76 | 1.75 | 52/1886 |
+
+**The hypothesis holds for the max statistic.** Guard-excluded max|jerk| is
+1.09–1.12× the baseline's — within the pre-committed ±15% parity band — using
+the decision rule from this round's task: *"comfort is at parity during
+normal driving; elevated maxima are confined to rare safety interventions
+(~1.9–2.8% of steps, matching the guard-activation rates already reported)."*
+
+**But the 95th-percentile tells a different, less flattering story, and is
+reported here rather than left out because the max-statistic passed.**
+p95|jerk| is 1.47–1.92× the baseline's *even excluding nothing* (this
+percentile is computed over all steps, guard or not, and 95% of ~1900 steps is
+already well outside the ~40-step guard-affected tail). This means the
+policy's *typical* driving — not just its single worst moment — involves
+meaningfully more frequent moderate-to-high jerk events than the baseline's.
+The honest combined verdict: the single worst moment of a policy episode is
+about as sharp as the baseline's, but a policy episode has a rougher ride
+overall than the max-statistic-parity finding alone would suggest.
+
 ## What this evidence can and cannot support
 
 This evaluation is on a **single simulated intersection** with one fixed-time

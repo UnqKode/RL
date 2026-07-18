@@ -503,3 +503,25 @@ in `results/round4/REPORT.md`.
    **PASS** (−9.78% ± 3.02%, all 3 seeds negative, no exclusions).
 5. All artifacts committed; nothing reported not in the repo: see commits
    following this entry.
+
+## Round 6: strengthen the verified result (no env/reward/guard/hyperparameter changes)
+
+Round 5's result was pushed to `origin` at the start of this round (Task 0).
+No tuning happens in round 6 — it only adds evidence.
+
+### Task 1: jerk decomposition — is the comfort caveat a guard artifact?
+
+Re-rolled all 10 scenarios per seed, pooling every step, splitting max|jerk|
+into "all steps" vs. "guard-firing steps (and the recovery step after)
+excluded," plus p95|jerk| over all steps. Full table and per-seed decision
+language in `results/round4/REPORT.md` ("Round 6, Task 1"); raw data in
+`results/round4/jerk_decomposition.csv`.
+
+**Mixed, honestly-reported verdict:** guard-excluded max|jerk| is within
+9–12% of the unguarded baseline's (4.23) for all three seeds — parity per this
+round's ±15% rule, confirming the single-worst-moment caveat was substantially
+a guard artifact (only ~2–3% of steps excluded). **But p95|jerk| is still
+1.47–1.92× the baseline's**, computed over all steps including the vast
+majority untouched by any guard — meaning the policy's *typical* ride is
+rougher than the baseline's, not just its single worst instant. Reported both
+ways rather than stopping at the passing statistic.

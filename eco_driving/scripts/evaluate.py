@@ -73,6 +73,7 @@ def rollout(cfg: EnvConfig, seed: int, act_fn):
         trace["desired_gap"].append(cfg.min_gap + cfg.time_headway * info["v"])
         trace["leader_present"].append(env.leader.present)
         trace["sig_phase"].append(info["sig_phase"])
+        trace["guard_fired"].append(bool(info.get("forced_brake") or info.get("forced_brake_leader")))
         if info["v"] < 0.3:
             stop_steps += 1
         max_abs_jerk = max(max_abs_jerk, abs(info["jerk"]))
