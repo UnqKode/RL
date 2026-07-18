@@ -1,0 +1,88 @@
+# Round 4/5 Final Report: 3-Seed Aggregate Evaluation
+
+Generated from `models/sac_seed{0,1,2}_round4/best_model.zip`, evaluated on the
+10 fixed scenario seeds (500–509) against the IDM baseline, via
+`eco_driving/scripts/eval_round5.py`. Raw data: `summary_metrics.csv`,
+`paired_fuel_delta.csv`, `confound_check.csv` in this directory.
+
+## Confound verdict (Task 2)
+
+The A1 (signal) and A4 (leader-collision) safety guards are environment-level
+and intervene on *any* controller, including the baseline. Measured directly:
+running the identical baseline logic on the same 10 scenarios with guards on
+vs. off, the guards fire on the baseline 69 times across 10 scenarios and
+raise its mean fuel use by **+3.67%** (ratio 1.0367). This exceeds the ±1%
+tolerance, so **the confound is confirmed**.
+
+**Decision (per the pre-committed rule): the primary comparison is guarded
+policy vs. unguarded baseline.** The unguarded baseline is the legitimate
+yardstick because its collision-free safety was independently established
+without any guard across 200+ seeds in rounds 1–3; the policy remains
+evaluated guarded because its own safety currently depends on the guards
+being present. This lowers the round-4 seed-0 headline from the originally
+reported −9.6% to **−6.6%** — same direction, smaller magnitude.
+
+## Per-seed results
+
+| seed | arrived | red-runs | collisions | guard-rate | paired fuel Δ (mean ± std, n=10) | mean travel time | mean stop-steps | mean max\|jerk\| |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 10/10 | 0 | 0 | 0.94% | −6.6% ± 10.9% | 93.85 s | 4.30 | 4.75 |
+| 1 | 10/10 | 0 | 0 | 1.08% | −12.6% ± 10.3% | 96.25 s | 2.80 | 5.45 |
+| 2 | 10/10 | 0 | 0 | 1.39% | −10.2% ± 11.7% | 94.30 s | 3.90 | 6.06 |
+
+**Baseline (unguarded), for reference:** travel time 93.25 s, stop-steps 0.60,
+max|jerk| 3.38.
+
+All three seeds independently satisfy every round-4/5 acceptance criterion:
+zero collisions and zero red-runs (30/30 scenario-runs across all three seeds
+are safe — structural, as designed), ≥9/10 arrivals (10/10 for all three),
+guard-activation rate ≤2% (0.94–1.39%, i.e. the policies are not riding the
+safety net), and travel time within +10s of baseline for every seed (all
+three are within ~3s).
+
+## 3-seed aggregate
+
+Per-seed mean paired fuel deltas: **[−6.57%, −12.56%, −10.21%]**.
+
+- **Aggregate mean ± std (across seeds): −9.78% ± 3.02%**
+- Standard error (n=3): 1.74%
+- One-sample t-test against 0 (n=3, df=2): **t = −5.61, p = 0.030**
+- 95% CI on the mean: **[−17.28%, −2.28%]**
+
+With only 3 seeds (df=2), this p-value and CI should be read as indicative,
+not as strong statistical confirmation — a df=2 t-test is sensitive to the
+exact seed values and the CI is wide (spanning roughly −17% to −2%). What can
+be said honestly: all three independently-trained seeds landed on the
+fuel-negative side with no cherry-picking (all three converged safely on the
+first attempt under this round's configuration, unlike every previous round),
+and the interval does not include or come close to crossing into
+fuel-positive territory, which is a meaningfully more robust result than a
+single-seed point estimate.
+
+**One caveat not part of this round's acceptance criteria but worth
+disclosing:** mean max|jerk| for the policy (4.75–6.06 across seeds) is higher
+than the unguarded baseline's (3.38). The policy is not smoother than the
+baseline in this round's evaluation — the fuel improvement is not paired with
+a comfort improvement. This wasn't a round-4/5 pass/fail criterion, but it
+would be relevant to any claim that the policy is unambiguously better across
+all three original objectives (fuel, time, comfort).
+
+## What this evidence can and cannot support
+
+This evaluation is on a **single simulated intersection** with one fixed-time
+signal cycle, a stop-and-go leader model, and fuel constants that are
+representative/illustrative rather than calibrated to any real vehicle (see
+the project README). Ten fixed evaluation scenarios and three training seeds
+provide meaningfully more evidence than a single run, but they do not
+constitute a large-sample or multi-intersection validation. What the evidence
+supports: under this specific simulated environment, a SAC policy trained with
+structural safety guards (A1/A4) and a fuel-forward reward weighting
+(`w_fuel=1.5`) can reduce fuel consumption by roughly 3–17% relative to a
+conventional IDM-following baseline, without any observed safety violations
+across 30 seed-scenario combinations, while remaining smoother-comfort is not
+established and the jerk numbers suggest the opposite. It does not
+demonstrate this holds at other intersections, other traffic patterns, other
+fuel models, or with real vehicle actuation/latency, and the guard-on-baseline
+confound finding is a reminder that any structural safety mechanism added to
+an environment should be checked against *all* controllers evaluated in it,
+not just the one being trained.

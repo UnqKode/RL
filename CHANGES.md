@@ -459,3 +459,47 @@ is unchanged (policy still beats baseline on fuel) but the magnitude was
 overstated by about a third — exactly the kind of silent-reconciliation risk
 this task was designed to catch, so it is reported here rather than smoothed
 over.
+
+### Task 3: seeds 1 and 2 trained under the identical round-4 configuration
+
+No changes of any kind to guards, reward, env, baseline, or hyperparameters —
+`sac_seed1_round4` and `sac_seed2_round4` use the exact same config as
+`sac_seed0_round4`. A6's structural assertion was re-run before training
+(unchanged, still passes: 0 red-runs, 0 collisions across 100 random-policy
+seeds). Both seeds trained cleanly to 400k steps on the first attempt — no
+restart or collapse, unlike every earlier round's seed-2 in particular.
+
+### Task 4: 3-seed aggregate — full report in `results/round4/REPORT.md`
+
+| seed | arrived | collisions/red-runs | guard-rate | paired fuel Δ (primary comparison) |
+|---|---|---|---|---|
+| 0 | 10/10 | 0/0 | 0.94% | −6.6% ± 10.9% |
+| 1 | 10/10 | 0/0 | 1.08% | −12.6% ± 10.3% |
+| 2 | 10/10 | 0/0 | 1.39% | −10.2% ± 11.7% |
+
+**3-seed aggregate: −9.78% ± 3.02%** (mean ± std of per-seed means).
+One-sample t-test vs. 0 (n=3, df=2): t=−5.61, p=0.030, 95% CI
+[−17.28%, −2.28%] — indicative given the small n, but all three
+independently-trained seeds land fuel-negative with no exclusions, and all
+30 seed×scenario combinations across the three seeds are collision- and
+red-run-free.
+
+**Caveat disclosed, not swept aside:** policy max|jerk| (4.75–6.06 across
+seeds) is *higher* than the unguarded baseline's (3.38) — the fuel win is not
+accompanied by a comfort win this round. Full honest-limitations paragraph
+(single intersection, illustrative fuel constants, 10 scenarios, 3 seeds) is
+in `results/round4/REPORT.md`.
+
+### Acceptance criteria for round 5
+
+1. Round-4 seed-0 evidence committed and reproducible: **PASS** (discrepancy
+   disclosed — see Task 1/2 above, headline corrected −9.6%→−6.6%).
+2. Confound check completed, decision rule applied, primary comparison
+   designated: **PASS** (confirmed; primary = guarded policy vs. unguarded
+   baseline).
+3. Seeds 1 and 2 zero collisions/red-runs, ≥9/10 arrivals, guard-activation
+   ≤2%: **PASS** for both.
+4. 3-seed aggregate paired fuel delta ≤0% under the primary comparison:
+   **PASS** (−9.78% ± 3.02%, all 3 seeds negative, no exclusions).
+5. All artifacts committed; nothing reported not in the repo: see commits
+   following this entry.
