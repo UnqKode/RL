@@ -1,9 +1,11 @@
-# Round 4/5 Final Report: 3-Seed Aggregate Evaluation
+# Round 4–6 Final Report: 5-Seed Aggregate Evaluation
 
-Generated from `models/sac_seed{0,1,2}_round4/best_model.zip`, evaluated on the
-10 fixed scenario seeds (500–509) against the IDM baseline, via
+Generated from `models/sac_seed{0,1,2,3,4}_round4/best_model.zip`, evaluated on
+the 10 fixed scenario seeds (500–509) against the IDM baseline, via
 `eco_driving/scripts/eval_round5.py`. Raw data: `summary_metrics.csv`,
-`paired_fuel_delta.csv`, `confound_check.csv` in this directory.
+`paired_fuel_delta.csv`, `confound_check.csv` in this directory. Seeds 0–2 are
+from round 5; seeds 3–4 were added in round 6 (Task 3) under the byte-identical
+configuration, with no exclusions or reseeding.
 
 ## Confound verdict (Task 2)
 
@@ -22,25 +24,52 @@ evaluated guarded because its own safety currently depends on the guards
 being present. This lowers the round-4 seed-0 headline from the originally
 reported −9.6% to **−6.6%** — same direction, smaller magnitude.
 
-## Per-seed results
+## Per-seed results (all 5 seeds)
 
 | seed | arrived | red-runs | collisions | guard-rate | paired fuel Δ (mean ± std, n=10) | mean travel time | mean stop-steps | mean max\|jerk\| |
 |---|---|---|---|---|---|---|---|---|
 | 0 | 10/10 | 0 | 0 | 0.94% | −6.6% ± 10.9% | 93.85 s | 4.30 | 4.75 |
 | 1 | 10/10 | 0 | 0 | 1.08% | −12.6% ± 10.3% | 96.25 s | 2.80 | 5.45 |
 | 2 | 10/10 | 0 | 0 | 1.39% | −10.2% ± 11.7% | 94.30 s | 3.90 | 6.06 |
+| 3 | 10/10 | 0 | 0 | 1.21% | −8.7% ± 14.0% | 95.15 s | 3.70 | 6.40 |
+| 4 | 10/10 | 0 | 0 | 1.62% | −8.8% ± 17.2% | 95.70 s | 6.50 | 6.56 |
 
 **Baseline (unguarded), for reference:** travel time 93.25 s, stop-steps 0.60,
 max|jerk| 3.38.
 
-All three seeds independently satisfy every round-4/5 acceptance criterion:
-zero collisions and zero red-runs (30/30 scenario-runs across all three seeds
-are safe — structural, as designed), ≥9/10 arrivals (10/10 for all three),
-guard-activation rate ≤2% (0.94–1.39%, i.e. the policies are not riding the
-safety net), and travel time within +10s of baseline for every seed (all
-three are within ~3s).
+All five seeds independently satisfy every round-4/5/6 acceptance criterion:
+zero collisions and zero red-runs (**50/50 scenario-runs across all five
+seeds are safe** — structural, as designed), ≥9/10 arrivals (10/10 for all
+five), guard-activation rate ≤2% (0.94–1.62%, i.e. the policies are not
+riding the safety net), and travel time within +10s of baseline for every
+seed (all five within ~3.5s). Seeds 3 and 4 were trained identically to
+seeds 0–2 (Round 6, Task 3) — same guards, reward, hyperparameters, 400k
+steps — and both converged cleanly on the first attempt with no exclusions.
 
-## 3-seed aggregate
+## Aggregate: 3-seed (round 5) vs. 5-seed (round 6), side by side
+
+Per-seed mean paired fuel deltas (5-seed set): **[−6.57%, −12.56%, −10.21%,
+−8.67%, −8.80%]**.
+
+| | 3-seed (round 5) | 5-seed (round 6) |
+|---|---|---|
+| mean | −9.78% | **−9.36%** |
+| std (across seeds) | 3.02% | 2.21% |
+| SE | 1.74% | 0.99% |
+| df | 2 | 4 |
+| t-statistic | −5.61 | **−9.46** |
+| p-value | 0.030 | **0.0007** |
+| 95% CI | [−17.28%, −2.28%] | **[−12.11%, −6.62%]** |
+
+Adding seeds 3 and 4 **strengthened** the result on every axis: the point
+estimate barely moved (−9.78% → −9.36%), but the across-seed variance
+shrank (std 3.02%→2.21%), the confidence interval narrowed by roughly 40%
+(width 15.0%→5.5%), and the p-value dropped by more than an order of
+magnitude (0.030→0.0007). Per the round's rules, seeds 3 and 4 entered the
+aggregate exactly as measured — no exclusions, no reseeding — and both
+happened to land fuel-negative, consistent with the first three.
+
+## 3-seed aggregate (superseded by the 5-seed aggregate above, kept for continuity)
 
 Per-seed mean paired fuel deltas: **[−6.57%, −12.56%, −10.21%]**.
 
@@ -60,9 +89,9 @@ fuel-positive territory, which is a meaningfully more robust result than a
 single-seed point estimate.
 
 **One caveat not part of this round's acceptance criteria but worth
-disclosing:** mean max|jerk| for the policy (4.75–6.06 across seeds) is higher
-than the unguarded baseline's (3.38). The policy is not smoother than the
-baseline in this round's evaluation — the fuel improvement is not paired with
+disclosing:** mean max|jerk| for the policy (4.75–6.56 across all 5 seeds) is
+higher than the unguarded baseline's (3.38). The policy is not smoother than
+the baseline in this round's evaluation — the fuel improvement is not paired with
 a comfort improvement. This wasn't a round-4/5 pass/fail criterion, but it
 would be relevant to any claim that the policy is unambiguously better across
 all three original objectives (fuel, time, comfort).
@@ -129,15 +158,16 @@ in case."
 This evaluation is on a **single simulated intersection** with one fixed-time
 signal cycle, a stop-and-go leader model, and fuel constants that are
 representative/illustrative rather than calibrated to any real vehicle (see
-the project README). Ten fixed evaluation scenarios and three training seeds
+the project README). Ten fixed evaluation scenarios and five training seeds
 provide meaningfully more evidence than a single run, but they do not
 constitute a large-sample or multi-intersection validation. What the evidence
 supports: under this specific simulated environment, a SAC policy trained with
 structural safety guards (A1/A4) and a fuel-forward reward weighting
-(`w_fuel=1.5`) can reduce fuel consumption by roughly 3–17% relative to a
-conventional IDM-following baseline, without any observed safety violations
-across 30 seed-scenario combinations, while remaining smoother-comfort is not
-established and the jerk numbers suggest the opposite. It does not
+(`w_fuel=1.5`) can reduce fuel consumption by roughly 6.6–12.6% (per-seed
+means) relative to a conventional IDM-following baseline, without any observed
+safety violations across 50 seed-scenario combinations, while remaining
+smoother-comfort is not established — guard-excluded max|jerk| is at parity
+with baseline but p95|jerk| is not (Round 6, Task 1). It does not
 demonstrate this holds at other intersections, other traffic patterns, other
 fuel models, or with real vehicle actuation/latency, and the guard-on-baseline
 confound finding is a reminder that any structural safety mechanism added to

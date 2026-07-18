@@ -525,3 +525,30 @@ a guard artifact (only ~2–3% of steps excluded). **But p95|jerk| is still
 majority untouched by any guard — meaning the policy's *typical* ride is
 rougher than the baseline's, not just its single worst instant. Reported both
 ways rather than stopping at the passing statistic.
+
+### Task 3: seeds 3 and 4, then the 5-seed aggregate
+
+A6 re-verified before training (unchanged, still passes). Trained
+`sac_seed{3,4}_round4` byte-identical to seeds 0–2 (guards A1/A4,
+`w_guard=0.5`, `w_fuel=1.5`, `w_gap=0.12`/clip `+30`, `r_violation=-1000`,
+400k steps). Both converged cleanly on the first attempt.
+
+| seed | arrived | collisions/red-runs | guard-rate | paired fuel Δ |
+|---|---|---|---|---|
+| 3 | 10/10 | 0/0 | 1.21% | −8.7% ± 14.0% |
+| 4 | 10/10 | 0/0 | 1.62% | −8.8% ± 17.2% |
+
+Both pass every criterion (safety, arrivals, guard-rate); both landed
+fuel-negative — entered the aggregate as measured, no exclusions needed.
+
+**5-seed aggregate: −9.36% ± 2.21%** (vs. the 3-seed −9.78% ± 3.02%).
+One-sample t-test vs. 0 (n=5, df=4): **t=−9.46, p=0.0007**, 95% CI
+**[−12.11%, −6.62%]** (vs. 3-seed CI [−17.28%, −2.28%]). Adding two seeds
+barely moved the point estimate but tightened the CI by ~40% and dropped the
+p-value by more than an order of magnitude — the two additional,
+independently-trained seeds substantially strengthen rather than dilute the
+result. Full side-by-side table in `results/round4/REPORT.md`.
+
+**50/50 seed×scenario combinations across all five seeds remain fully safe**
+(0 collisions, 0 red-runs) — the structural guarantee held with zero
+exceptions as the seed count grew.
