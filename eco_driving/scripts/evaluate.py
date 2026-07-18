@@ -54,6 +54,9 @@ def rollout(cfg: EnvConfig, seed: int, act_fn):
     trace = defaultdict(list)
     stop_steps = 0
     max_abs_jerk = 0.0
+    n_steps = 0
+    n_guard_a1 = 0
+    n_guard_a4 = 0
     terminated = truncated = False
     info_last = info
     while not (terminated or truncated):
@@ -73,6 +76,11 @@ def rollout(cfg: EnvConfig, seed: int, act_fn):
         if info["v"] < 0.3:
             stop_steps += 1
         max_abs_jerk = max(max_abs_jerk, abs(info["jerk"]))
+        n_steps += 1
+        if info.get("forced_brake"):
+            n_guard_a1 += 1
+        if info.get("forced_brake_leader"):
+            n_guard_a4 += 1
         info_last = info
 
     trace["cum_fuel_mL"] = list(np.cumsum(trace["fuel_mL"]))
@@ -88,6 +96,10 @@ def rollout(cfg: EnvConfig, seed: int, act_fn):
         stop_steps=stop_steps,
         max_abs_jerk=max_abs_jerk,
         leader_present=env.leader.present,
+        n_steps=n_steps,
+        guard_a1_count=n_guard_a1,
+        guard_a4_count=n_guard_a4,
+        guard_rate=(n_guard_a1 + n_guard_a4) / max(n_steps, 1),
     )
     return trace, summary
 
