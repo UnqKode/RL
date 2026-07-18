@@ -1,0 +1,4 @@
+seed,best_checkpoint_ts,best_eval_reward,final_100k_slope_per_1k_steps,verdict,gated_into_task4
+0,380000,-19.487,0.03761,still-improving,True
+1,300000,-5.204,-0.01433,converged,False
+2,180000,-15.29,0.35161,"ambiguous (early best checkpoint, but positive late-stage slope -- not gated into Task 4 per strict rule, noted as caveat)",False

@@ -100,6 +100,30 @@ The honest combined verdict: the single worst moment of a policy episode is
 about as sharp as the baseline's, but a policy episode has a rougher ride
 overall than the max-statistic-parity finding alone would suggest.
 
+## Round 6, Task 2: convergence check
+
+Read `evaluations.npz` for each seed: timestep of the best eval checkpoint,
+and the slope of the eval-reward curve over the final 100k training steps
+(simple linear fit). Full data: `results/round4/convergence_check.csv`.
+
+| seed | best checkpoint (steps) | best eval reward | final-100k slope (per 1k steps) | verdict |
+|---|---|---|---|---|
+| 0 | 380,000 | −19.49 | +0.0376 | **still-improving** (best ≥350k, slope>0) |
+| 1 | 300,000 | −5.20 | −0.0143 | **converged** (best <350k, slope≤0) |
+| 2 | 180,000 | −15.29 | +0.3516 | **ambiguous** — see below |
+
+Seed 2 doesn't cleanly fit either bucket as strictly defined: its best
+checkpoint came early (180k, satisfying the "converged" timing criterion) but
+its final-100k slope is clearly positive and about 10× steeper than seed 0's
+(+0.35 vs. +0.04 per 1k steps) — the opposite of what "converged" requires.
+This reads as a noisy, non-monotonic reward curve rather than a clean
+convergence, but it does not meet the *conjunctive* still-improving
+definition (`best ≥350k AND slope>0`) either, since its best checkpoint is
+early. Per the round's strict gating rule, **only seed 0 is gated into Task
+4** (extended training); seed 2's anomaly is reported here as a caveat but not
+acted on, since the task's rule is explicit about not training longer "just
+in case."
+
 ## What this evidence can and cannot support
 
 This evaluation is on a **single simulated intersection** with one fixed-time
