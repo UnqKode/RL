@@ -552,3 +552,35 @@ result. Full side-by-side table in `results/round4/REPORT.md`.
 **50/50 seed×scenario combinations across all five seeds remain fully safe**
 (0 collisions, 0 red-runs) — the structural guarantee held with zero
 exceptions as the seed count grew.
+
+### Task 4: extended training for seed 0 (conditional — gated in by Task 2)
+
+Only seed 0 met the strict "still-improving" definition, so only seed 0 was
+extended, to 700k steps (`models/sac_seed0_round4_700k/`). Kept **out of the
+primary 5-seed aggregate**, which stays all-400k per the round's rule.
+
+| | 400k | 700k |
+|---|---|---|
+| fuel Δ | −6.6% ± 10.3% | **−8.5% ± 13.4%** |
+| stop-steps | 4.3 | 2.2 |
+| max\|jerk\| | 4.75 | 4.63 |
+| guard-rate | 0.94% | 0.77% |
+| safety | 10/10, 0/0 | 10/10, 0/0 |
+
+Extending training modestly improved every metric while safety stayed
+perfect and guard reliance *decreased* — validating Task 2's classification
+of seed 0 as still-improving rather than a false positive. Full data in
+`results/round4/seed0_400k_vs_700k.csv`.
+
+## Round 6 acceptance criteria
+
+1. All artifacts pushed to `origin` after every task (this round's commits
+   are pushed immediately, per Task 0's instruction): **PASS**.
+2. Task 1 jerk decomposition committed with an honest (mixed) verdict:
+   **PASS**.
+3. Seeds 3/4: zero collisions, zero red-runs, ≥9/10 arrivals, guard-rate
+   ≤2% each: **PASS** for both.
+4. 5-seed aggregate reported with df=4 stats alongside the 3-seed original,
+   no exclusions: **PASS** (−9.36% ± 2.21%, t=−9.46, p=0.0007).
+5. Task 4 run only because gated in by Task 2 (seed 0 only), kept out of the
+   primary aggregate: **PASS**.

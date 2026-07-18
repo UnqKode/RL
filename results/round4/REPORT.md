@@ -153,6 +153,32 @@ early. Per the round's strict gating rule, **only seed 0 is gated into Task
 acted on, since the task's rule is explicit about not training longer "just
 in case."
 
+## Round 6, Task 4: extended training for seed 0 (700k steps) — conditional, not in primary aggregate
+
+Seed 0 was the only seed gated in by Task 2. Trained fresh to 700k steps
+(`models/sac_seed0_round4_700k/`, otherwise byte-identical config) and
+re-evaluated with the same protocol. **Kept separate from the primary 5-seed
+aggregate**, which stays all-400k for comparability, per the round's rule.
+
+| | 400k | 700k |
+|---|---|---|
+| arrived | 10/10 | 10/10 |
+| red-runs / collisions | 0 / 0 | 0 / 0 |
+| guard-activation rate | 0.94% | 0.77% |
+| paired fuel Δ (mean ± std, n=10) | −6.6% ± 10.3% | **−8.5% ± 13.4%** |
+| mean travel time | 93.8 s | 94.7 s |
+| mean stop-steps | 4.3 | 2.2 |
+| mean max\|jerk\| | 4.75 | 4.63 |
+
+Extending training modestly **improved** seed 0 on the metric Task 2 flagged
+as still-rising: fuel delta strengthened from −6.6% to −8.5%, stop-steps
+roughly halved, and jerk improved slightly — all while safety remained
+perfect (10/10 arrivals, 0/0 violations) and guard-activation rate actually
+*decreased* (0.94%→0.77%, i.e. the more-trained policy needs the safety net
+even less). This is consistent with, and validates, the Task 2 classification
+of seed 0 as still-improving at 400k. Full per-scenario data:
+`results/round4/seed0_400k_vs_700k.csv`.
+
 ## What this evidence can and cannot support
 
 This evaluation is on a **single simulated intersection** with one fixed-time
