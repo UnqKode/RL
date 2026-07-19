@@ -124,7 +124,13 @@ class EnvConfig:
 
 @dataclass
 class TrainConfig:
-    total_timesteps: int = 400_000
+    # Round 7 (Task 1): 400_000 -> 1_000_000. This is the only line that needs
+    # to change to rescale the LR-decay horizon too: linear_schedule() in
+    # train.py is keyed to SB3's *fractional* progress_remaining (1.0 at the
+    # start of THIS learn() call down to 0.0 at its end), not absolute step
+    # count, so 3e-4->1e-4 automatically stretches to span the full 1M steps
+    # with no further code change.
+    total_timesteps: int = 1_000_000
     eval_freq: int = 10_000
     n_eval_episodes: int = 8
     # Linear learning-rate decay (SB3 schedule input is "progress_remaining",
@@ -147,7 +153,7 @@ class TrainConfig:
     # to escape it.
     target_entropy: float = -1.5
     net_arch: tuple = (256, 256)
-    seeds: tuple = (0, 1, 2)
+    seeds: tuple = (0, 1, 2, 3, 4, 5, 6)  # Round 7: 7 seeds, pre-registered, no substitution
     # Per-seed override for learning_starts (fallback if a seed collapses into
     # the idle basin again despite w_idle/GLOSA/rate-limited actions).
     learning_starts_overrides: dict = field(default_factory=dict)
